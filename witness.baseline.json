@@ -1,0 +1,7 @@
+[
+  {
+    "mutation": "< → <=",
+    "snippet": "for (let t = 16; t < 64; t++) {",
+    "reason": "SHA-256 message-schedule bound; extending t<64 to t<=64 writes w[64] on a Uint32Array(64), which the typed array silently drops, and w[64] is never read by the 0..63 compression loop — a proven-equivalent mutant (the same schedule bound fallforgemint baselines)."
+  }
+]
