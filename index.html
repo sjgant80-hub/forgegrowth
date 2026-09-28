@@ -92,7 +92,7 @@
 </div>
 
 <script type="module">
-import { verifyReceipt, generateAd, generateCopy, planPublish, canon } from './forgegrowth.mjs';
+import { verifyReceipt, generateAd, generateCopy, planPublish, canon } from './forgegrowth.mjs?v=2';
 const $=id=>document.getElementById(id);
 (function(){try{const s=localStorage.getItem('fg-theme');if(s)document.documentElement.setAttribute('data-theme',s);}catch(e){}
   $('theme').onclick=()=>{const c=document.documentElement.getAttribute('data-theme')||(matchMedia('(prefers-color-scheme:dark)').matches?'dark':'light');const n=c==='dark'?'light':'dark';document.documentElement.setAttribute('data-theme',n);try{localStorage.setItem('fg-theme',n)}catch(e){}};})();
