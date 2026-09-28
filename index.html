@@ -56,12 +56,19 @@
 </header>
 
 <section>
+  <div class="card queue" id="launchCard">
+    <h2>Launched · FallForge Mint, 28 September 2026</h2>
+    <p class="hint">The real launch, read from <a href="launches/fallforgemint-2026-09-28.json">launches/fallforgemint-2026-09-28.json</a>. A <b>fired</b> channel carries a self-hashed fire receipt, checked here. The account-bound channels wait for a person signed in to them: their door opens the channel's own form, prefilled where it allows. This page posts nothing.</p>
+    <div id="launch"><p class="note">Loading the launch ledger…</p></div>
+  </div>
+</section>
+<section>
   <div class="card">
     <h2>1 · Drop in a scorecard receipt</h2>
     <p class="hint">A <code>scorecard-*.json</code> from fallforgemint. It's verified first — a tampered or fake receipt is refused, so no ad is ever built on a lie.</p>
     <textarea id="rin"></textarea>
     <div class="row"><button class="btn" id="gen" type="button">Verify &amp; generate →</button>
-      <button class="btn ghost" id="sample" type="button">Use a sample receipt</button>
+      <button class="btn ghost" id="sample" type="button">Use the real CI-minted scorecard</button>
       <span id="vstate" class="verdict"></span></div>
   </div>
 
@@ -100,7 +107,7 @@
 </div>
 
 <script type="module">
-import { verifyReceipt, generateAd, generateCopy, planPublish, canon } from './forgegrowth.mjs?v=2';
+import { verifyReceipt, generateAd, generateCopy, planPublish, canon, shareLink, verifyFire } from './forgegrowth.mjs?v=3';
 const $=id=>document.getElementById(id);
 (function(){try{const s=localStorage.getItem('fg-theme');if(s)document.documentElement.setAttribute('data-theme',s);}catch(e){}
   $('theme').onclick=()=>{const c=document.documentElement.getAttribute('data-theme')||(matchMedia('(prefers-color-scheme:dark)').matches?'dark':'light');const n=c==='dark'?'light':'dark';document.documentElement.setAttribute('data-theme',n);try{localStorage.setItem('fg-theme',n)}catch(e){}};})();
@@ -110,10 +117,13 @@ const FFM='https://sjgant80-hub.github.io/fallforgemint/';
 async function sha256hex(text){const b=new TextEncoder().encode(text);const d=await crypto.subtle.digest('SHA-256',b);return [...new Uint8Array(d)].map(x=>x.toString(16).padStart(2,'0')).join('');}
 async function sampleReceipt(){
   const body={v:1,kind:'fallforgemint-scorecard',base:'qwen2.5-0.5b',modelFingerprint:await sha256hex('model'),taskHash:await sha256hex('task'),evidenceHash:await sha256hex('evidence'),heldOut:8,baseHits:3,mintedHits:6,score:6/8,verdict:'BEATS',smallSample:false,createdAt:'2026-09-28',scope:'self-issued',keyClass:'software-ed25519',rerun:'https://github.com/sjgant80-hub/fallforgemint/actions'};
-  body.hash=await sha256hex(canon(body));
+  delete body.rerun;body.hash=await sha256hex(canon(body));
   return body;
 }
-$('sample').onclick=async()=>{$('rin').value=JSON.stringify(await sampleReceipt(),null,2);};
+const REAL='https://raw.githubusercontent.com/sjgant80-hub/fallforgemint/main/rerun/proof/genuine.json';
+async function realReceipt(){try{const b=await (await fetch(REAL)).json();return b.receipt;}catch(e){return null;}}
+async function startReceipt(){const r=await realReceipt();if(r)return r;$('vstate').textContent='(offline: a made-up sample receipt)';return sampleReceipt();}
+$('sample').onclick=async()=>{$('rin').value=JSON.stringify(await startReceipt(),null,2);};
 
 $('gen').onclick=()=>{
   let r;
@@ -128,18 +138,40 @@ $('gen').onclick=()=>{
   if(!g.ok){$('copyCard').style.display='none';$('qCard').style.display='none';return;}
   // channel copy
   $('copyCard').style.display='';const cw=$('copy');cw.innerHTML='';
-  for(const ch of ['show-hn','indie-hackers','x-thread']){
-    const c=generateCopy(r,ch,{reverifyUrl:FFM});if(!c.ok)continue;
-    const d=document.createElement('div');d.className='copy';d.innerHTML='<b>'+ch+'</b><p>'+(c.title+'\n\n'+c.body).replace(/</g,'&lt;')+'</p>';cw.appendChild(d);
+  const esc=(t)=>String(t).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/"/g,'&quot;');
+  for(const ch of ['show-hn','x-post','indie-hackers','product-hunt']){
+    const c=generateCopy(r,ch,{reverifyUrl:FFM});
+    const d=document.createElement('div');d.className='copy';
+    if(!c.ok){d.innerHTML='<b>'+ch+'</b><p>REFUSED: '+esc(c.why)+'</p>';cw.appendChild(d);continue;}
+    const door=shareLink(c,FFM);
+    const head=[c.title,c.tagline,c.description].filter(Boolean).join('\n');
+    d.innerHTML='<b>'+ch+'</b>'+(door.ok?' · <a href="'+esc(door.url)+'" target="_blank" rel="noopener">open '+(door.prefilled?'prefilled':'the form')+' →</a>':'')+'<p>'+esc((head?head+'\n\n':'')+c.body)+'</p>';cw.appendChild(d);
   }
   // publish queue — behind the key
-  const p=planPublish(g.ad,['show-hn','indie-hackers','x-thread']);
+  const p=planPublish(g.ad,['show-hn','x-post','indie-hackers','product-hunt']);
   $('qCard').style.display='';const q=$('queue');q.innerHTML='';
   for(const a of p.actions){const d=document.createElement('div');d.className='item';d.innerHTML='<span>'+a.channel+' — '+a.action+'</span><span class="lock">🔒 '+a.status+'</span>';q.appendChild(d);}
   $('qnote').textContent='executed: '+p.executed+' of '+p.actions.length+' — the engine posted nothing. Simon’s key fires the launch.';
 };
 
 // start with the sample so the page shows it working
-(async()=>{$('rin').value=JSON.stringify(await sampleReceipt(),null,2);$('gen').click();})();
+(async()=>{$('rin').value=JSON.stringify(await startReceipt(),null,2);$('gen').click();})();
+
+// the launch ledger — every fire receipt re-hashed here before it is shown as fired
+(async()=>{
+  const box=$('launch');
+  let L;try{L=await (await fetch('launches/fallforgemint-2026-09-28.json',{cache:'no-store'})).json();}catch(e){box.innerHTML='<p class="note">The launch ledger could not be loaded.</p>';return;}
+  const esc=(t)=>String(t).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/"/g,'&quot;');
+  box.innerHTML='';
+  for(const q of L.queue){
+    const d=document.createElement('div');d.className='item';
+    if(q.status==='FIRED'){const v=verifyFire(q.fire);
+      d.innerHTML='<span><b>'+esc(q.channel)+'</b> — <a href="'+esc(q.fire.url)+'" target="_blank" rel="noopener">'+esc(q.fire.url.replace('https://',''))+'</a> · '+esc(q.fire.firedAt)+'</span><span class="lock" style="color:var('+(v.valid?'--ok':'--bad')+')">'+(v.valid?'✓ FIRED · receipt '+esc(q.fire.hash.slice(0,12)):'✕ fire receipt does not verify')+'</span>';}
+    else d.innerHTML='<span><b>'+esc(q.channel)+'</b> — '+(q.door?'<a href="'+esc(q.door.url)+'" target="_blank" rel="noopener">open '+(q.door.prefilled?'prefilled':'the form')+' →</a>':'')+'</span><span class="lock">🔒 '+esc(q.status)+' · a person posts</span>';
+    box.appendChild(d);
+  }
+  const s=L.scorecard;const n=document.createElement('p');n.className='note';
+  n.textContent='Advertises scorecard '+s.hash.slice(0,12)+'…: '+s.mintedHits+'/'+s.heldOut+' vs base '+s.base+' '+s.baseHits+'/'+s.heldOut+', '+s.verdict+'. Fired '+L.fired+' of '+L.queue.length+'.';box.appendChild(n);
+})();
 </script>
 </html>
