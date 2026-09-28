@@ -128,52 +128,90 @@ export function auditAd(text, r, opts = {}) {
   return { ok: true };
 }
 
-const headline = (verdict) => verdict === 'BEATS' ? 'A model you own just beat the one you were renting — on your own data.'
-  : verdict === 'LOSES' ? 'We minted a model, measured it honestly, and it lost. So keep renting — here is the receipt.'
-  : 'Owned and rented tied on your task — here is the honest receipt.';
+// What the receipt shows, and nothing it does not: it measured the minted model against ITS OWN base on held-out
+// examples. It does not measure a rented model, and a demo task is not the reader's data, so no headline says either.
+const headline = (verdict) => verdict === 'BEATS' ? 'The minted model beat its base model on held-out examples.'
+  : verdict === 'LOSES' ? 'The minted model lost to its base model on held-out examples, and the receipt says so.'
+  : 'The minted model tied its base model on held-out examples.';
 
 // generateAd — a deterministic scorecard-ad from a VERIFIED receipt. Numbers come only from the receipt;
-// the result is audited, so a fabricated figure can never ship.
+// the result is audited, so a fabricated figure can never ship. The held-out wording stays narrow-true: the held-out
+// examples were not in the spec the model was given — never "it never saw them".
 export function generateAd(r, opts = {}) {
   const f = backedFacts(r);
   if (!f.ok) return { ok: false, why: 'refused: ' + f.why };
-  // the re-run linchpin: prefer the receipt's own CI re-run URL, else a given re-verify link
-  const rerun = (typeof r.rerun === 'string' && r.rerun) ? r.rerun
-    : (typeof opts.reverifyUrl === 'string' ? opts.reverifyUrl : '');
-  const claim = 'On ' + f.heldOut + ' held-out examples it never saw, the minted model scored ' + f.mintedHits
-    + ' and the base "' + f.base + '" scored ' + f.baseHits + '. Verdict: ' + f.verdict + '.';
-  const honesty = f.verdict === 'LOSES' ? 'It lost. On this task, keep renting — we publish the number even when it is against us.'
+  const measured = (typeof r.rerun === 'string' && r.rerun) ? r.rerun : '';
+  const reverify = typeof opts.reverifyUrl === 'string' ? opts.reverifyUrl : '';
+  const claim = 'On ' + f.heldOut + ' held-out examples that were not in the spec it was given, the minted model scored ' + f.mintedHits
+    + ' and its base "' + f.base + '", given the same inputs without the spec, scored ' + f.baseHits + '. Verdict: ' + f.verdict + '.';
+  const honesty = f.verdict === 'LOSES' ? 'It lost. On this task, keep the base — we publish the number even when it is against us.'
     : (f.smallSample ? 'Small sample — indicative, re-run it to be sure.' : 'This receipt can fail. Do not trust it — re-run it.');
   // honest key-class line ONLY when the receipt states it (never overclaim the signature)
   const keyLine = r.keyClass === 'software-ed25519' ? 'Signed with a software key: the issuer could fabricate this — which is exactly why it is re-runnable.' : '';
-  const cta = rerun ? ('Re-run it yourself: ' + rerun) : 'Re-run it yourself — it verifies in your browser.';
-  const ad = [headline(f.verdict), claim, honesty, keyLine, cta].filter(Boolean).join('\n');
-  const audit = auditAd(ad, r, { reverifyUrl: opts.reverifyUrl, rerun });
+  const where = measured ? 'Measured on a GitHub runner: ' + measured : '';
+  const cta = reverify ? 'Re-run it yourself: ' + reverify : (measured ? '' : 'Re-run it yourself — it verifies in your browser.');
+  const ad = [headline(f.verdict), claim, honesty, keyLine, where, cta].filter(Boolean).join('\n');
+  const audit = auditAd(ad, r, { reverifyUrl: reverify, rerun: measured });
   if (!audit.ok) return { ok: false, why: 'refused: ' + audit.why, unbacked: audit.unbacked, hype: audit.hype };
-  return { ok: true, ad, verdict: f.verdict, receiptHash: f.hash, rerun };
+  return { ok: true, ad, verdict: f.verdict, receiptHash: f.hash, rerun: measured };
 }
 
-// generateCopy — channel-specific launch copy, same proof-not-hype audit
+// Channel limits. The fixed titles are pinned under them by the tests; the X post, which carries receipt values and a
+// link, is checked here every time, so a one-click link never lands on a form that rejects it.
+export const LIMITS = { hnTitle: 80, xPost: 280, xUrl: 23, phTagline: 60, phDescription: 260 };
+// X counts every link as 23 characters, whatever its length.
+export function xLength(text) {
+  if (typeof text !== 'string') return -1;
+  const urls = text.match(/https?:\/\/\S+/g) || [];
+  return urls.reduce((n, u) => n - u.length + LIMITS.xUrl, text.length);
+}
+
+// generateCopy — channel-specific launch copy, every word audited against the receipt (numbers) and the hype list.
+// opts.reverifyUrl is the product page every channel links to.
 export function generateCopy(r, channel, opts = {}) {
   const g = generateAd(r, opts);
   if (!g.ok) return g;
   const f = backedFacts(r);
-  let title, body;
+  const page = typeof opts.reverifyUrl === 'string' ? opts.reverifyUrl : '';
+  const what = 'Bring one job and a few examples. It mints an Ollama model you run on your own machine, holds some examples out, and scores the minted model against its base. The scorecard is signed, and anyone can re-run it on a clean GitHub runner: an edited number, a borrowed CI link or a result that does not reproduce fails the job. The own-vs-rent calculator says keep renting when renting is cheaper. The mint runs in your browser. MIT.';
+  const credit = 'Powered by the Konomi architecture, created by Thomas Frumkin.';
+  let out;
   if (channel === 'show-hn') {
-    title = 'Show HN: win the OpenAI-bill argument with your CFO — mint a private model, prove it on your own data';
-    body = g.ad + '\nFor the eng lead tired of that argument: run it against YOUR task, get the exact own-vs-rent math. Nothing leaves your browser. It tells you to keep renting when that is genuinely cheaper.';
+    out = { title: 'Show HN: FallForge Mint – own a model, with a scorecard anyone can re-run', body: g.ad + '\n\n' + what };
   } else if (channel === 'indie-hackers') {
-    title = 'I built a thing that mints you a private model and then tries to beat what you are renting';
-    body = g.ad + '\nBuilt in public, sovereign, MIT. The growth engine that made this post physically cannot publish without a human signature — and it cannot state a number that is not on the receipt.';
+    out = { title: 'I built a model minter whose scorecards can fail, and a CI job that re-runs them', body: g.ad + '\n\n' + what
+      + '\n\nThis post came out of forgegrowth, which refuses any number that is not on the receipt and cannot publish on its own.\n' + credit };
   } else if (channel === 'x-thread') {
-    title = 'Own the AI you are renting.';
-    body = g.ad;
+    out = { title: 'A model you own, and a scorecard that can say it lost.', body: g.ad };
+  } else if (channel === 'x-post') {
+    const text = 'On held-out examples that were not in its spec, the minted model scored ' + f.mintedHits + '/' + f.heldOut + '; its base ' + f.base
+      + ', given no spec, scored ' + f.baseHits + '/' + f.heldOut + ': ' + f.verdict + '. The scorecard is signed, and anyone can re-run it on a clean GitHub runner. A forged one fails. ' + page;
+    out = { title: '', body: text };
+    if (xLength(text) > LIMITS.xPost) return { ok: false, why: 'the X post is longer than X allows' };
+  } else if (channel === 'product-hunt') {
+    out = { title: 'FallForge Mint', tagline: 'Mint a model you own, with a scorecard anyone can re-run',
+      description: 'Bring one job and a few examples. It mints an Ollama model for your own machine, scores it against its base on held-out examples, and signs the result. Anyone can re-run the scorecard on a clean GitHub runner.',
+      body: g.ad + '\n\n' + what + '\n\n' + credit };
   } else {
     return { ok: false, why: 'unknown channel: ' + String(channel) };
   }
-  const audit = auditAd(title + '\n' + body, r, opts);
-  if (!audit.ok) return { ok: false, why: 'refused: ' + audit.why, unbacked: audit.unbacked };
-  return { ok: true, channel, title, body, verdict: f.verdict };
+  const audit = auditAd(Object.values(out).join('\n'), r, { reverifyUrl: page, rerun: g.rerun });   // every field a channel shows
+  if (!audit.ok) return { ok: false, why: 'refused: ' + audit.why, unbacked: audit.unbacked, hype: audit.hype };
+  return { ok: true, channel, verdict: f.verdict, ...out };
+}
+
+// shareLink — the one-click door for an account-bound channel. It opens the channel's own form, prefilled where the
+// channel allows it; a person signed in to that channel presses post. Nothing here posts.
+export const DOORS = { hn: 'https://news.ycombinator.com/submitlink', x: 'https://x.com/intent/post', ih: 'https://www.indiehackers.com/new-post', ph: 'https://www.producthunt.com/posts/new' };
+export function shareLink(copy, pageUrl) {
+  if (!isObj(copy) || copy.ok !== true) return { ok: false, why: 'shareLink needs audited copy' };
+  if (typeof pageUrl !== 'string' || !/^https:\/\/\S+$/.test(pageUrl)) return { ok: false, why: 'shareLink needs the https page the post points at' };
+  const e = encodeURIComponent;
+  if (copy.channel === 'show-hn') return { ok: true, channel: copy.channel, url: DOORS.hn + '?u=' + e(pageUrl) + '&t=' + e(copy.title), paste: copy.body, prefilled: true };
+  if (copy.channel === 'x-post') return { ok: true, channel: copy.channel, url: DOORS.x + '?text=' + e(copy.body), paste: '', prefilled: true };
+  if (copy.channel === 'indie-hackers') return { ok: true, channel: copy.channel, url: DOORS.ih, paste: copy.title + '\n\n' + copy.body, prefilled: false };
+  if (copy.channel === 'product-hunt') return { ok: true, channel: copy.channel, url: DOORS.ph, paste: copy.body, prefilled: false };
+  return { ok: false, why: 'no one-click door for ' + String(copy.channel) };
 }
 
 // planPublish — prepare external posts as PENDING_KEY. NEVER executes; Simon's key fires the launch.
@@ -184,4 +222,23 @@ export function planPublish(ad, channels) {
   return { ok: true, actions, executed: 0 };
 }
 
-export default { canon, verifyReceipt, backedFacts, auditAd, generateAd, generateCopy, planPublish };
+// fireReceipt — the record that a queued action was fired: which channel, the public URL it produced, when, on whose
+// key, and which scorecard it advertised. Self-hashed. It records a firing; it never performs one.
+export function fireReceipt(input) {
+  if (!isObj(input)) return { ok: false, why: 'fireReceipt takes an object' };
+  const { channel, url, firedAt, key, receiptHash } = input;
+  if (typeof channel !== 'string' || channel.length === 0) return { ok: false, why: 'the channel is required' };
+  if (typeof url !== 'string' || !/^https:\/\/\S+$/.test(url)) return { ok: false, why: 'the public https URL the firing produced is required' };
+  if (typeof firedAt !== 'string' || !Number.isFinite(Date.parse(firedAt))) return { ok: false, why: 'firedAt must be a timestamp' };
+  if (typeof key !== 'string' || key.length === 0) return { ok: false, why: 'the key that fired it is required — nothing fires without one' };
+  if (typeof receiptHash !== 'string' || !/^[0-9a-f]{64}$/.test(receiptHash)) return { ok: false, why: 'the scorecard hash it advertised is required' };
+  const body = { v: 1, kind: 'forgegrowth-fire', channel, status: 'FIRED', url, firedAt, key, receiptHash };
+  return { ok: true, fire: { ...body, hash: sha256hex(canon(body)) } };
+}
+export function verifyFire(x) {
+  if (!isObj(x) || x.kind !== 'forgegrowth-fire' || typeof x.hash !== 'string') return { ok: false, why: 'not a forgegrowth fire receipt' };
+  const body = { ...x }; delete body.hash;
+  return { ok: true, valid: sha256hex(canon(body)) === x.hash };
+}
+
+export default { canon, verifyReceipt, backedFacts, auditAd, generateAd, generateCopy, planPublish, xLength, shareLink, fireReceipt, verifyFire, LIMITS, DOORS };

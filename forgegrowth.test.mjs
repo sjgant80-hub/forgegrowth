@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
-import { canon, verifyReceipt, backedFacts, auditAd, generateAd, generateCopy, planPublish } from './forgegrowth.mjs';
+import { canon, verifyReceipt, backedFacts, auditAd, generateAd, generateCopy, planPublish, xLength, shareLink, fireReceipt, verifyFire, LIMITS, DOORS } from './forgegrowth.mjs';
 
 const sha = (s) => createHash('sha256').update(String(s), 'utf8').digest('hex');
 // build a receipt whose hash is self-consistent (so verifyReceipt's re-hash passes) unless noHash/tampered
@@ -155,4 +155,113 @@ test('planPublish queues every channel as PENDING_KEY and executes nothing', () 
   assert.deepEqual(planPublish('x').actions.map((a) => a.channel), ['show-hn', 'indie-hackers', 'x-thread']); // default set
   assert.equal(planPublish('x', []).actions.length, 3); // empty channel list → default set (kills the length guard)
   assert.equal(planPublish('').ok, false);         // nothing to publish
+});
+
+// ── launch: honest copy, channel limits, one-click doors, fire receipts ──
+const RUN = 'https://github.com/sjgant80-hub/fallforgemint/actions/runs/36431565425';
+test('generateAd says only what the receipt measured — narrow-true held-out wording, the base got no spec', () => {
+  const ad = generateAd(mk({ keyClass: 'software-ed25519' }), { reverifyUrl: URL }).ad;
+  assert.ok(ad.startsWith('The minted model beat its base model on held-out examples.'));
+  assert.ok(ad.includes('On 8 held-out examples that were not in the spec it was given, the minted model scored 6 and its base "qwen2.5-0.5b", given the same inputs without the spec, scored 3. Verdict: BEATS.'));
+  for (const v of [mk(), mk({ verdict: 'LOSES', mintedHits: 2, baseHits: 5 }), mk({ verdict: 'TIES', mintedHits: 4, baseHits: 4 })]) {
+    const a = generateAd(v, { reverifyUrl: URL }).ad;
+    assert.equal(/renting|your own data|never saw|memoris|hermetic/i.test(a), false, a);
+  }
+  assert.ok(generateAd(mk({ verdict: 'LOSES', mintedHits: 2, baseHits: 5 })).ad.startsWith('The minted model lost to its base model on held-out examples, and the receipt says so.'));
+  assert.ok(generateAd(mk({ verdict: 'LOSES', mintedHits: 2, baseHits: 5 })).ad.includes('keep the base'));
+  assert.ok(generateAd(mk({ verdict: 'TIES', mintedHits: 4, baseHits: 4 })).ad.startsWith('The minted model tied its base model on held-out examples.'));
+});
+test('generateAd: where it was measured and how to re-run it are separate lines, each only when known', () => {
+  const both = generateAd(mk({ rerun: RUN }), { reverifyUrl: URL });
+  assert.deepEqual(both.ad.split('\n').slice(-2), ['Measured on a GitHub runner: ' + RUN, 'Re-run it yourself: ' + URL]);
+  assert.equal(both.rerun, RUN);
+  const runOnly = generateAd(mk({ rerun: RUN })).ad;
+  assert.equal(runOnly.split('\n').pop(), 'Measured on a GitHub runner: ' + RUN);
+  assert.equal(runOnly.includes('verifies in your browser'), false);
+  assert.equal(generateAd(mk()).ad.split('\n').pop(), 'Re-run it yourself — it verifies in your browser.');
+  assert.equal(generateAd(mk(), { reverifyUrl: 7 }).ad.split('\n').pop(), 'Re-run it yourself — it verifies in your browser.');
+  assert.equal(generateAd(mk({ rerun: 5 }), { reverifyUrl: URL }).rerun, '');
+});
+test('generateCopy: the rerun link on a receipt is not mistaken for an unbacked number (a real CI receipt copies)', () => {
+  const r = mk({ rerun: RUN, keyClass: 'software-ed25519' });
+  for (const ch of ['show-hn', 'indie-hackers', 'x-thread', 'x-post', 'product-hunt']) {
+    const c = generateCopy(r, ch, { reverifyUrl: URL });
+    assert.equal(c.ok, true, ch + ': ' + c.why);
+    assert.equal(c.channel, ch);
+    assert.equal(c.verdict, 'BEATS');
+  }
+  assert.ok(generateCopy(r, 'show-hn', { reverifyUrl: URL }).body.includes(RUN));
+});
+test('generateCopy: the fixed titles fit each channel, and the credit rides on the long-form posts', () => {
+  const r = mk();
+  const hn = generateCopy(r, 'show-hn', { reverifyUrl: URL });
+  assert.equal(hn.title, 'Show HN: FallForge Mint – own a model, with a scorecard anyone can re-run');
+  assert.ok(hn.title.length <= LIMITS.hnTitle && hn.title.startsWith('Show HN: '));
+  assert.ok(hn.body.includes('an edited number, a borrowed CI link or a result that does not reproduce fails the job'));
+  const ph = generateCopy(r, 'product-hunt', { reverifyUrl: URL });
+  assert.ok(ph.tagline.length <= LIMITS.phTagline && ph.description.length <= LIMITS.phDescription);
+  assert.equal(ph.title, 'FallForge Mint');
+  for (const c of [ph, generateCopy(r, 'indie-hackers', { reverifyUrl: URL })]) assert.ok(c.body.endsWith('Powered by the Konomi architecture, created by Thomas Frumkin.'));
+  assert.ok(generateCopy(r, 'indie-hackers', { reverifyUrl: URL }).body.includes('cannot publish on its own'));
+  assert.equal(generateCopy(r, 'x-thread', { reverifyUrl: URL }).body, generateAd(r, { reverifyUrl: URL }).ad);
+  assert.deepEqual(LIMITS, { hnTitle: 80, xPost: 280, xUrl: 23, phTagline: 60, phDescription: 260 });
+});
+test('generateCopy: the X post carries the receipt numbers and the link, and is refused past X\'s limit', () => {
+  const x = generateCopy(mk(), 'x-post', { reverifyUrl: URL });
+  assert.equal(x.body, 'On held-out examples that were not in its spec, the minted model scored 6/8; its base qwen2.5-0.5b, given no spec, scored 3/8: BEATS. The scorecard is signed, and anyone can re-run it on a clean GitHub runner. A forged one fails. ' + URL);
+  assert.equal(x.title, '');
+  // the post grows with the base name: exactly the limit passes, one character more is refused
+  const room = LIMITS.xPost - xLength(x.body);
+  const fits = generateCopy(mk({ base: 'qwen2.5-0.5b' + 'x'.repeat(room) }), 'x-post', { reverifyUrl: URL });
+  assert.equal(fits.ok, true);
+  assert.equal(xLength(fits.body), LIMITS.xPost);
+  const over = generateCopy(mk({ base: 'qwen2.5-0.5b' + 'x'.repeat(room + 1) }), 'x-post', { reverifyUrl: URL });
+  assert.deepEqual([over.ok, over.why], [false, 'the X post is longer than X allows']);
+});
+test('generateCopy: a channel audit refuses what the ad audit would let through', () => {
+  // a page link carrying digits the receipt does not back is fine when it IS the page (scrubbed), refused when not
+  const odd = 'https://example.com/v9/';
+  assert.equal(generateCopy(mk(), 'x-post', { reverifyUrl: odd }).ok, true);
+  const r = mk({ rerun: RUN });
+  const c = generateCopy(r, 'show-hn', { reverifyUrl: URL });
+  assert.equal(auditAd(Object.values({ t: c.title, b: c.body }).join('\n'), r, { reverifyUrl: URL }).ok, false);   // the run link must be scrubbed
+});
+test('xLength: every link counts as 23, whatever its length; non-text is -1', () => {
+  assert.equal(xLength('abc'), 3);
+  assert.equal(xLength('see https://a.b/' + 'x'.repeat(100)), 4 + 23);
+  assert.equal(xLength('http://x.y and https://z.w/q'), 23 + 5 + 23);
+  assert.equal(xLength(''), 0);
+  assert.equal(xLength(null), -1);
+});
+test('shareLink: one-click doors open each channel\'s own form, prefilled where it allows; nothing posts', () => {
+  const r = mk({ rerun: RUN });
+  const hn = shareLink(generateCopy(r, 'show-hn', { reverifyUrl: URL }), URL);
+  assert.equal(hn.url, 'https://news.ycombinator.com/submitlink?u=' + encodeURIComponent(URL) + '&t=' + encodeURIComponent('Show HN: FallForge Mint – own a model, with a scorecard anyone can re-run'));
+  assert.deepEqual([hn.ok, hn.channel, hn.prefilled], [true, 'show-hn', true]);
+  assert.ok(hn.paste.startsWith('The minted model beat'));
+  const xc = generateCopy(r, 'x-post', { reverifyUrl: URL }), x = shareLink(xc, URL);
+  assert.deepEqual([x.url, x.paste, x.prefilled], ['https://x.com/intent/post?text=' + encodeURIComponent(xc.body), '', true]);
+  const ihc = generateCopy(r, 'indie-hackers', { reverifyUrl: URL }), ih = shareLink(ihc, URL);
+  assert.deepEqual([ih.url, ih.paste, ih.prefilled], ['https://www.indiehackers.com/new-post', ihc.title + '\n\n' + ihc.body, false]);
+  const phc = generateCopy(r, 'product-hunt', { reverifyUrl: URL }), ph = shareLink(phc, URL);
+  assert.deepEqual([ph.url, ph.paste, ph.prefilled, ph.channel], ['https://www.producthunt.com/posts/new', phc.body, false, 'product-hunt']);
+  assert.deepEqual(DOORS, { hn: 'https://news.ycombinator.com/submitlink', x: 'https://x.com/intent/post', ih: 'https://www.indiehackers.com/new-post', ph: 'https://www.producthunt.com/posts/new' });
+  assert.match(shareLink(generateCopy(r, 'x-thread', { reverifyUrl: URL }), URL).why, /no one-click door for x-thread/);
+  for (const bad of [null, 'copy', { ok: false, channel: 'show-hn' }, { ok: 'true', channel: 'show-hn' }]) assert.match(shareLink(bad, URL).why, /needs audited copy/);
+  for (const page of [undefined, 'http://x.y/', 'https://a b/', 'https://']) assert.match(shareLink(generateCopy(r, 'show-hn', { reverifyUrl: URL }), page).why, /needs the https page/);
+});
+test('fireReceipt: a self-hashed record of what fired, where, when, on whose key — refuses without any of them', () => {
+  const good = { channel: 'github-release', url: 'https://github.com/sjgant80-hub/fallforgemint/releases/tag/v1.0.0', firedAt: '2026-09-28T16:00:00Z', key: 'simon-go', receiptHash: 'a'.repeat(64) };
+  const f = fireReceipt(good).fire;
+  assert.deepEqual([f.kind, f.status, f.v, f.channel, f.url, f.firedAt, f.key, f.receiptHash], ['forgegrowth-fire', 'FIRED', 1, good.channel, good.url, good.firedAt, 'simon-go', 'a'.repeat(64)]);
+  assert.deepEqual(verifyFire(f), { ok: true, valid: true });
+  assert.equal(verifyFire({ ...f, url: 'https://elsewhere.example/' }).valid, false);
+  for (const bad of [null, { ...f, kind: 'x' }, { ...f, hash: 7 }]) assert.equal(verifyFire(bad).ok, false);
+  assert.match(fireReceipt('x').why, /takes an object/);
+  assert.match(fireReceipt({ ...good, channel: '' }).why, /channel/);
+  assert.equal(fireReceipt({ ...good, channel: 5 }).ok, false);
+  for (const url of ['http://x.y/', 'ftp://x', 'https://a b', 7]) assert.match(fireReceipt({ ...good, url }).why, /public https URL/);
+  for (const firedAt of ['soon', '', 7]) assert.match(fireReceipt({ ...good, firedAt }).why, /timestamp/);
+  for (const key of ['', undefined]) assert.match(fireReceipt({ ...good, key }).why, /nothing fires without one/);
+  for (const receiptHash of ['A'.repeat(64), 'a'.repeat(63), undefined]) assert.match(fireReceipt({ ...good, receiptHash }).why, /scorecard hash/);
 });
