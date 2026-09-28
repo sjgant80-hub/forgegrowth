@@ -2,9 +2,9 @@
 // tools/launch.mjs — the edge that turns a real fallforgemint scorecard into a launch, using ONLY the gated kernel.
 //
 //   node tools/launch.mjs <scorecard.json | re-run bundle.json> --page <https url> --name <launch>
-//                         [--fired <channel>=<https url>@<ISO time> ...] [--key <who fired it>]
+//                         [--fired <channel>=<https url>@<ISO time> ...] [--key <who fired it>] [--gallery <image url> ...]
 //
-// Writes launches/<name>.json: the scorecard it advertises (verified), the audited copy for every channel, the one-click
+// Writes launches/<name>.json (and a paste-ready launches/<name>.md): the scorecard it advertises (verified), the audited copy for every channel, the one-click
 // door for every account-bound channel, and the queue. Every channel stays PENDING_KEY until a fire receipt says it
 // fired; a firing is recorded here, never performed here. It posts nothing. Rerunning it keeps earlier fire receipts.
 import { readFileSync, writeFileSync, existsSync, mkdirSync } from 'node:fs';
@@ -63,5 +63,32 @@ const ledger = {
 };
 mkdirSync(dirname(out), { recursive: true });
 writeFileSync(out, JSON.stringify(ledger, null, 2) + '\n');
+// the paste-ready kit, next to the ledger: the order to post, each door, the exact audited words, and the Product Hunt
+// fields (Product Hunt has no prefill link, so its launch is filled in its own dashboard from these)
+const gallery = all('--gallery');
+const md = [];
+const L = ledger, S = L.scorecard;
+md.push('# Launch kit: ' + name, '');
+md.push('Advertises the scorecard `' + S.hash + '`: ' + S.mintedHits + '/' + S.heldOut + ' vs its base ' + S.base + ' ' + S.baseHits + '/' + S.heldOut + ', ' + S.verdict + (S.measuredIn ? ', measured in ' + S.measuredIn : '') + '.');
+md.push('Every word below passed forgegrowth\'s audit (numbers only from the scorecard, no hype words). Nothing here posts: each door opens the channel\'s own form for a person signed in to it.', '');
+const ORDER = { 'github-release': 'our own rail', 'show-hn': 'Show HN', 'x-post': 'X', 'indie-hackers': 'Indie Hackers', 'product-hunt': 'Product Hunt' };
+let step = 0;
+for (const q of queue) {
+  md.push('## ' + (q.status === 'FIRED' ? '✓ FIRED — ' : (++step) + ' · ') + ORDER[q.channel], '');
+  if (q.status === 'FIRED') { md.push('[' + q.fire.url + '](' + q.fire.url + ') · ' + q.fire.firedAt + ' · fire receipt `' + q.fire.hash + '`', ''); continue; }
+  const c = copy[q.channel];
+  md.push('**Open:** ' + q.door.url, '');
+  if (q.channel === 'show-hn') md.push('The link fills the title and URL. Then post this as the first comment:', '', '```', c.body, '```', '');
+  if (q.channel === 'x-post') md.push('The link fills the whole post (' + K.xLength(c.body) + ' of ' + K.LIMITS.xPost + ' characters as X counts them):', '', '```', c.body, '```', '');
+  if (q.channel === 'indie-hackers') md.push('Title:', '', '```', c.title, '```', '', 'Body:', '', '```', c.body, '```', '');
+  if (q.channel === 'product-hunt') {
+    md.push('Product Hunt has no prefill link: fill these in its launch form.', '');
+    md.push('- **Name:** ' + c.title, '- **Tagline** (' + c.tagline.length + '/' + K.LIMITS.phTagline + '): ' + c.tagline, '- **Description** (' + c.description.length + '/' + K.LIMITS.phDescription + '): ' + c.description, '- **Link:** ' + page);
+    if (gallery.length) md.push('- **Gallery** (1270×760):', ...gallery.map((g) => '  - ' + g));
+    md.push('', '**Maker comment:**', '', '```', c.body, '```', '');
+  }
+}
+writeFileSync(out.replace(/\.json$/, '.md'), md.join('\n') + '\n');
+
 console.log('launch ' + name + ': ' + ledger.fired + ' fired, ' + (queue.length - ledger.fired) + ' waiting on a key → ' + out);
 for (const q of queue) console.log('  ' + q.status.padEnd(12) + q.channel.padEnd(15) + (q.fire ? q.fire.url : (q.door ? q.door.url.slice(0, 90) + (q.door.url.length > 90 ? '…' : '') : '')));
