@@ -1,0 +1,12 @@
+ForgeGrowth
+Copyright (c) 2026 Simon Gant — the FallForge estate (sjgant80-hub)
+
+The estate's own code (the growth kernel forgegrowth.mjs, the single-file page) is
+licensed under the MIT License (see LICENSE), covering the estate's own code only.
+
+PROVENANCE
+- ForgeGrowth consumes fallforgemint scorecard receipts. fallforgemint and the Konomi
+  architecture it is built on were created by Thomas Frumkin. Powered by the Konomi
+  architecture, created by Thomas Frumkin.
+- The canonical-JSON helper is vendored from fallforgemint so a receipt re-hashes
+  identically. MIT, same estate.

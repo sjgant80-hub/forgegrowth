@@ -1,0 +1,5 @@
+node_modules/
+wout.json
+werr.txt
+*.witnessbak
+ffm-kernel.mjs

@@ -1,0 +1,21 @@
+name: witness-gate
+# Un-forgeable proof on GitHub's runner: unit tests prove the growth organ does what it claims (refuses
+# fabrication, refuses tampered receipts, queues publishes behind the key), and the witness mutation gate
+# proves those tests actually guard the kernel.
+on:
+  push:
+    paths: [forgegrowth.mjs, forgegrowth.test.mjs, .witness/**, .github/workflows/gate.yml]
+  pull_request:
+  workflow_dispatch:
+jobs:
+  gate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+      - name: unit tests
+        run: node --test forgegrowth.test.mjs
+      - name: witness mutation gate
+        run: node .witness/witness.mjs mutate forgegrowth.mjs --cap 500 --test node --test forgegrowth.test.mjs

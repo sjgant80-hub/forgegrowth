@@ -1,0 +1,15 @@
+# ForgeGrowth
+
+> The estate's growth organ. It turns a real fallforgemint scorecard receipt into launch copy under two
+> hard rules: (1) every number an ad states must be a value on the receipt, or the ad is REFUSED
+> (fabrication is structurally impossible); (2) every external publish is queued behind a human key and
+> never auto-executed. Proof-not-hype. Witness-gated, zero dependencies, runs offline.
+
+## What it is
+- Live: https://sjgant80-hub.github.io/forgegrowth/
+- forgegrowth.mjs — verifyReceipt, backedFacts, auditAd (the anti-fabrication + anti-hype gate),
+  generateAd, generateCopy, planPublish (queues external posts as PENDING_KEY, executes nothing).
+- Witness mutation gate CLEAN; unit tests cover the gate against tampered receipts and fabricated ads.
+
+## Provenance
+- Consumes fallforgemint scorecard receipts; Konomi architecture created by Thomas Frumkin. MIT.
